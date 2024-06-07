@@ -1,0 +1,9 @@
+{
+    "Name": "Phonon Native",
+    "Icon": "qtcreator",
+    "Version": "@PHONON_NATIVE_VERSION@",
+    "Website": "https://github.com/OpenProgger/phonon-native",
+
+    "InterfaceVersion": 0,
+    "InitialPreference": 20
+}
