@@ -10,9 +10,6 @@ The main purpose for this backend was the tighter integration with Qt and removi
 ### Missing Phonon Features
 - DVD and DVD Menu playback
 - Media Streams
-- Audio/Video Tracks
-- Subtitles
-- Chapters
 - User-defined Aspect Ratios
 - Audio/Video Filters
 

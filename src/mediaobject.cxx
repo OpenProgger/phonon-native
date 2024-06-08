@@ -10,10 +10,13 @@ module;
 #include <QProcess>
 #include <QtCore/qtmochelpers.h>
 #include <phonon/AddonInterface>
+#include <phonon/GlobalDescriptionContainer>
+#include <phonon/MediaController>
 #include <phonon/MediaObjectInterface>
 
 #define ABOUT_TO_FINISH 2000
 #define TO_MSEC 1000.0F
+#define BASE10 10
 
 export module phonon_native:mediaobject;
 
@@ -220,12 +223,105 @@ namespace Phonon::Native {
 
 		[[nodiscard]]
 		auto hasInterface(Interface /*iface*/) const -> bool final {
-			return false;
+			return true;
 		}
 
-		auto interfaceCall(Interface /*iface*/, int /*command*/,
-			const QList<QVariant>& /*arguments = QList<QVariant>()*/)
-			-> QVariant final {
+		auto interfaceCall(Interface iface, int command,
+			const QList<QVariant>& arguments) -> QVariant final {
+			switch(iface) {
+				case NavigationInterface:
+					switch(static_cast<AddonInterface::NavigationCommand>(
+						command)) {
+						case AddonInterface::availableMenus:
+							return QVariant::fromValue(
+								QList<MediaController::NavigationMenu>());
+						case AddonInterface::setMenu:
+							return true;
+					}
+				case ChapterInterface:
+					switch(
+						static_cast<AddonInterface::ChapterCommand>(command)) {
+						case AddonInterface::availableChapters:
+							return m_chapters.size();
+						case AddonInterface::chapter:
+							return m_currentChapter;
+						case AddonInterface::setChapter:
+							m_player->setPosition(static_cast<qint64>(
+								m_chapters.at(arguments.first().toInt(nullptr))
+									.first));
+							return true;
+					}
+				case AngleInterface:
+					switch(static_cast<AddonInterface::AngleCommand>(command)) {
+						case AddonInterface::availableAngles:
+						case AddonInterface::angle:
+							return 0;
+						case AddonInterface::setAngle:
+							return true;
+					}
+				case TitleInterface:
+					switch(static_cast<AddonInterface::TitleCommand>(command)) {
+						case AddonInterface::availableTitles:
+						case AddonInterface::title:
+							return 1;
+						case AddonInterface::setAutoplayTitles:
+						case AddonInterface::setTitle:
+							return true;
+						case AddonInterface::autoplayTitles:
+							return false;
+					}
+				case SubtitleInterface:
+					switch(
+						static_cast<AddonInterface::SubtitleCommand>(command)) {
+						case AddonInterface::availableSubtitles:
+							return QVariant::fromValue(
+								GlobalSubtitles::instance()->listFor(this));
+						case AddonInterface::currentSubtitle:
+							return QVariant::fromValue(
+								GlobalSubtitles::instance()->localIdFor(
+									this, m_player->activeSubtitleTrack()));
+						case AddonInterface::setCurrentSubtitle:
+							qDebug() << arguments;
+							m_player->setActiveSubtitleTrack(
+								GlobalSubtitles::instance()->localIdFor(this,
+									arguments.first()
+										.value<SubtitleDescription>()
+										.index()));
+							qDebug() << "Current Sub "
+									 << m_player->activeSubtitleTrack();
+							return true;
+						case AddonInterface::setCurrentSubtitleFile:
+						case AddonInterface::setSubtitleAutodetect:
+						case AddonInterface::setSubtitleEncoding:
+						case AddonInterface::setSubtitleFont:
+						case AddonInterface::subtitleAutodetect:
+							return true;
+						case AddonInterface::subtitleEncoding:
+							return "UTF";
+						case AddonInterface::subtitleFont:
+							return "default";
+					}
+				case AudioChannelInterface:
+					switch(static_cast<AddonInterface::AudioChannelCommand>(
+						command)) {
+						case AddonInterface::availableAudioChannels:
+							return QVariant::fromValue(
+								GlobalAudioChannels::instance()->listFor(this));
+						case AddonInterface::currentAudioChannel:
+							return QVariant::fromValue(
+								GlobalAudioChannels::instance()->localIdFor(
+									this, m_player->activeAudioTrack()));
+						case AddonInterface::setCurrentAudioChannel:
+							m_player->setActiveAudioTrack(
+								GlobalAudioChannels::instance()->localIdFor(
+									this,
+									arguments.first()
+										.value<AudioChannelDescription>()
+										.index()));
+							return true;
+					}
+			}
+
 			return {};
 		}
 
@@ -270,44 +366,68 @@ namespace Phonon::Native {
 					newState = StoppedState;
 					break;
 				case QMediaPlayer::LoadedMedia:
-					if(m_state == PlayingState) {
-						return;
-					}
-					emit availableAudioChannelsChanged();
-					emit titleChanged(0);
-					emit availableTitlesChanged(1);
-					emit angleChanged(0);
-					emit availableAnglesChanged(1);
-					m_process->start("ffprobe",
-						QStringList()
-							<< "-i" << m_player->source().toLocalFile()
-							<< "-show_chapters"
-							<< "-print_format"
-							<< "json",
-						QIODeviceBase::ReadWrite);
-					if(m_process->waitForFinished(-1)) {
-						auto output{QJsonDocument::fromJson(
-							m_process->readAllStandardOutput(), nullptr)
-										.object()};
-						if(output.contains("chapters")) {
-							m_chapters.clear();
-							for(auto chapter:
-								output.value("chapters").toArray()) {
-								m_chapters << QPair<float, float>{
-									chapter.toObject()["start_time"]
-										.toString({})
-										.toFloat(nullptr),
-									chapter.toObject()["end_time"]
-										.toString({})
-										.toFloat(nullptr)};
-							}
-							emit availableChaptersChanged(
-								static_cast<int>(m_chapters.size()));
+					{
+						if(m_state == PlayingState) {
+							return;
 						}
+						emit availableAudioChannelsChanged();
+						emit titleChanged(0);
+						emit availableTitlesChanged(1);
+						emit angleChanged(0);
+						emit availableAnglesChanged(1);
+						GlobalAudioChannels::instance()->clearListFor(this);
+						auto tracks{m_player->audioTracks()};
+						for(auto i{0}; i < tracks.size(); i++) {
+							auto title{tracks[i][QMediaMetaData::Title]};
+							GlobalAudioChannels::instance()->add(this,
+								i,
+
+								title.toString(),
+								"");
+						}
+						GlobalSubtitles::instance()->clearListFor(this);
+						auto subtitles{m_player->subtitleTracks()};
+						for(auto i{0}; i < subtitles.size(); i++) {
+							auto title{subtitles[i][QMediaMetaData::Title]};
+							GlobalSubtitles::instance()->add(this,
+								i,
+								(title.toString().isEmpty()
+										? "Subtitle "
+											  + QString::number(i, BASE10)
+										: title.toString()),
+								"");
+						}
+						m_process->start("ffprobe",
+							QStringList()
+								<< "-i" << m_player->source().toLocalFile()
+								<< "-show_chapters"
+								<< "-print_format"
+								<< "json",
+							QIODeviceBase::ReadWrite);
+						if(m_process->waitForFinished(-1)) {
+							auto output{QJsonDocument::fromJson(
+								m_process->readAllStandardOutput(), nullptr)
+											.object()};
+							if(output.contains("chapters")) {
+								m_chapters.clear();
+								for(auto chapter:
+									output.value("chapters").toArray()) {
+									m_chapters << QPair<float, float>{
+										chapter.toObject()["start_time"]
+											.toString({})
+											.toFloat(nullptr),
+										chapter.toObject()["end_time"]
+											.toString({})
+											.toFloat(nullptr)};
+								}
+								emit availableChaptersChanged(
+									static_cast<int>(m_chapters.size()));
+							}
+						}
+						m_lastTick = 0;
+						newState = PausedState;
+						break;
 					}
-					m_lastTick = 0;
-					newState = PausedState;
-					break;
 				case QMediaPlayer::LoadingMedia:
 					newState = LoadingState;
 					break;

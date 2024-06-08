@@ -57,9 +57,18 @@ export namespace Phonon::Native {
 				this,
 				[=, this](const QUrl& source) {
 					m_buffer.clear();
-					if(source.isLocalFile()) {
-						m_decoder->setSource(source);
-						m_decoder->start();
+					m_decoder->setSource(source);
+					m_decoder->start();
+				},
+				Qt::AutoConnection);
+			connect(
+				player,
+				&QMediaPlayer::hasVideoChanged,
+				this,
+				[=, this](bool enabled) {
+					if(enabled) {
+						m_decoder->stop();
+						m_buffer.clear();
 					}
 				},
 				Qt::AutoConnection);
